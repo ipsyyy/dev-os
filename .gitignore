@@ -32,3 +32,6 @@ contractiq-app/public/pdf.worker.min.mjs
 
 # Vercel
 .vercel
+
+# Local Netlify folder
+.netlify
