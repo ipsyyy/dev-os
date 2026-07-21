@@ -26,5 +26,9 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 
+# Generated at install time by scripts/copy-pdf-worker.mjs — always
+# reproducible from the installed pdfjs-dist version, never hand-edited.
+contractiq-app/public/pdf.worker.min.mjs
+
 # Vercel
 .vercel

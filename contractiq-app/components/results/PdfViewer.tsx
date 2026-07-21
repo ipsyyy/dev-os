@@ -8,7 +8,12 @@ import { createClient } from '@/lib/supabase/client'
 import { findHighlightMatch } from '@/lib/results/highlight-match'
 import type { ContractViewerProps } from './viewer-types'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).href
+// Served as a plain static file (copied by scripts/copy-pdf-worker.mjs on
+// every install) rather than via `new URL(..., import.meta.url)` — that
+// pattern routes the file through webpack's Terser pass in production
+// builds, which can't parse `import.meta` inside pdfjs-dist's own
+// pre-minified worker bundle.
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
 
 const SIGNED_URL_TTL_SECONDS = 3600
 const MIN_SCALE = 0.6

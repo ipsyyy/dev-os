@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { Suspense, useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -12,6 +12,14 @@ const CALLBACK_ERROR_MESSAGES: Record<string, string> = {
 }
 
 export default function SignInPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignInForm />
+    </Suspense>
+  )
+}
+
+function SignInForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
