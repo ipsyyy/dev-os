@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens — docs/design.md. Reference these, never hardcode hex values. */
+:root {
+  --text-primary: #070A0E;
+  --text-secondary: #4A4C4F;
+  --bg-primary: #FFFFFF;
+  --bg-surface: #FAFAFA;
+  --bg-subtle: #F0F0F1;
+  --brand: #115ACB;
+}
+
+.type-h5 {
+  font-family: var(--font-inter), sans-serif;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 32px;
+  letter-spacing: 0;
+}
+
+.type-body-lg {
+  font-family: var(--font-inter), sans-serif;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+  letter-spacing: 0;
+}
+
+.type-body-sm {
+  font-family: var(--font-inter), sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  letter-spacing: 0;
+}
+
+/* Temporary highlight flash on the page span nearest a term's source_sentence. */
+@keyframes highlight-fade {
+  from { background-color: #FFF2E0; } /* Yellow 100 */
+  to { background-color: transparent; }
+}
+.highlight-flash {
+  animation: highlight-fade 1.5s ease-out;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.btn-primary {
+  padding: 0.75rem 2rem;
+  border-radius: 999px;
+  background: #00c6ff;
+  color: #0f0c29;
+  font-weight: 700;
+  font-size: 1rem;
+  text-decoration: none;
+  display: inline-block;
+  transition: transform 0.2s;
+}
+.btn-primary:hover { transform: scale(1.05); }
+
+.btn-ghost {
+  padding: 0.75rem 2rem;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  display: inline-block;
+  transition: border-color 0.2s;
+}
+.btn-ghost:hover { border-color: rgba(255, 255, 255, 0.9); }
