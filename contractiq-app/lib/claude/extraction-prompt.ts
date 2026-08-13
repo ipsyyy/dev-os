@@ -1,5 +1,3 @@
-import type { Tool } from '@anthropic-ai/sdk/resources/messages'
-
 export type ContractType = 'NDA' | 'MSA'
 
 export const STANDARD_TERMS: Record<ContractType, string[]> = {
@@ -43,33 +41,18 @@ export interface ExtractKeyTermsToolInput {
   terms: ExtractedTermRaw[]
 }
 
-export const EXTRACT_KEY_TERMS_TOOL: Tool = {
-  name: 'extract_key_terms',
-  description: 'Extract key contractual terms from the provided contract text.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      terms: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            term_name: { type: 'string' },
-            value: { type: 'string' },
-            page_number: { type: 'integer', minimum: 1 },
-            confidence_score: { type: 'number', minimum: 0, maximum: 100 },
-            source_sentence: { type: 'string' },
-          },
-          required: ['term_name', 'value', 'page_number', 'confidence_score', 'source_sentence'],
-        },
-      },
-    },
-    required: ['terms'],
-  },
-}
+// The Azure agent has no forced tool-calling — it can only be asked, in plain
+// text, to emit JSON matching this shape and hope it complies.
+export const JSON_RESPONSE_INSTRUCTIONS =
+  'Respond with a single JSON object and nothing else — no markdown code fences, no commentary before or ' +
+  'after it. The object must have this exact shape:\n' +
+  '{"terms": [{"term_name": string, "value": string, "page_number": integer >= 1, "confidence_score": number ' +
+  '0-100, "source_sentence": string}, ...]}\n' +
+  'Include one entry per target term listed below, in the same order.'
 
-export const TOOL_PARSE_RETRY_REMINDER =
-  'Your previous response was not valid. Call the extract_key_terms tool with all required fields for every term.'
+export const JSON_PARSE_RETRY_REMINDER =
+  'Your previous response could not be parsed as JSON matching the required shape. Respond with ONLY the raw ' +
+  'JSON object — no markdown code fences, no explanation, no leading or trailing text.'
 
 const NDA_EXAMPLES = `Example 1 — value clearly stated:
 Excerpt (page 2): "This Agreement is effective as of March 1, 2025 (the "Effective Date")."

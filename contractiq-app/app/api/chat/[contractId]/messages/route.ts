@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createClaudeClient, CLAUDE_MODEL } from '@/lib/claude/client'
+import { createAzureAgentClient, agentReferenceBody } from '@/lib/azure/client'
 import { classifyQuery, buildChatSystemPrompt, validateCitation, CITATION_RETRY_REMINDER } from '@/lib/claude/chat-prompt'
+
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
 const MAX_MESSAGE_LENGTH = 2000
 const MESSAGE_FETCH_LIMIT = 200
@@ -46,6 +49,19 @@ async function checkAccess(supabase: SupabaseServerClient, contractId: string) {
   }
 
   return { user, contract } as const
+}
+
+function buildInputText(contextPrompt: string, history: { role: string; content: string }[], question: string, extraReminder?: string) {
+  const historyText = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n')
+
+  return [
+    contextPrompt,
+    historyText ? `Conversation history:\n${historyText}` : null,
+    extraReminder ?? null,
+    `User: ${question}`,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join('\n\n')
 }
 
 export async function GET(request: Request, { params }: { params: { contractId: string } }) {
@@ -97,14 +113,14 @@ export async function POST(request: Request, { params }: { params: { contractId:
     .limit(MESSAGE_FETCH_LIMIT)
 
   const classification = classifyQuery(rawMessage)
-  const systemPrompt = buildChatSystemPrompt(contract.contract_text ?? '', classification)
+  // The agent's system prompt lives in the Azure portal, not per-request — the
+  // Responses API rejects `instructions` when an agent_reference is set. So the
+  // citation-format contract that used to be Anthropic's `system` field is
+  // bundled straight into the single input message instead.
+  const contextPrompt = buildChatSystemPrompt(contract.contract_text ?? '', classification)
+  const historyMessages = (history ?? []) as { role: string; content: string }[]
 
-  const claudeMessages = [
-    ...(history ?? []).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    { role: 'user' as const, content: rawMessage },
-  ]
-
-  const client = createClaudeClient()
+  const client = createAzureAgentClient()
 
   let assistantText: string | null = null
   let pageCitation: number | null = null
@@ -115,15 +131,12 @@ export async function POST(request: Request, { params }: { params: { contractId:
     }
 
     try {
-      const response = await client.messages.create({
-        model: CLAUDE_MODEL,
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: claudeMessages,
-      })
+      const response = await client.responses.create(
+        { input: [{ role: 'user', content: buildInputText(contextPrompt, historyMessages, rawMessage) }] },
+        { body: agentReferenceBody() }
+      )
 
-      const textBlock = response.content.find((block) => block.type === 'text')
-      const text = textBlock && 'text' in textBlock ? textBlock.text : ''
+      const text = response.output_text ?? ''
       const citation = validateCitation(text)
 
       if (citation.valid) {
@@ -133,14 +146,15 @@ export async function POST(request: Request, { params }: { params: { contractId:
         // One automatic retry for a missing citation — separate from the
         // outer network/5xx retry loop and always exactly one attempt, per spec §2/§3.
         try {
-          const retryResponse = await client.messages.create({
-            model: CLAUDE_MODEL,
-            max_tokens: 1000,
-            system: `${systemPrompt}\n\n${CITATION_RETRY_REMINDER}`,
-            messages: claudeMessages,
-          })
-          const retryTextBlock = retryResponse.content.find((block) => block.type === 'text')
-          const retryText = retryTextBlock && 'text' in retryTextBlock ? retryTextBlock.text : ''
+          const retryResponse = await client.responses.create(
+            {
+              input: [
+                { role: 'user', content: buildInputText(contextPrompt, historyMessages, rawMessage, CITATION_RETRY_REMINDER) },
+              ],
+            },
+            { body: agentReferenceBody() }
+          )
+          const retryText = retryResponse.output_text ?? ''
           const retryCitation = validateCitation(retryText)
 
           if (retryCitation.valid) {
@@ -159,8 +173,13 @@ export async function POST(request: Request, { params }: { params: { contractId:
       }
 
       break
-    } catch {
-      // network/5xx failure on the primary call — retried by the outer loop
+    } catch (err) {
+      // network/5xx failure on the primary call — retried by the outer loop,
+      // unless this was the last attempt, in which case surface the real error.
+      if (attempt === RETRY_DELAYS_MS.length) {
+        const message = err instanceof Error ? err.message : 'Unknown Azure agent error'
+        return errorResponse(502, 'ai_provider_error', message)
+      }
     }
   }
 
@@ -185,7 +204,7 @@ export async function POST(request: Request, { params }: { params: { contractId:
     .single()
 
   if (assistantInsertError || !assistantRow) {
-    // Claude already generated a reply — don't leave the user's turn orphaned
+    // Azure already generated a reply — don't leave the user's turn orphaned
     // with no response and no way to tell a retry from a duplicate question.
     await supabase.from('chat_messages').delete().eq('id', userRow.id)
     return errorResponse(500, 'chat_persist_failed', 'Something went wrong saving this message.')

@@ -10,7 +10,8 @@
     "postinstall": "node scripts/copy-pdf-worker.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.112.3",
+    "@azure/ai-projects": "^2.4.0",
+    "@azure/identity": "^4.13.1",
     "@opentelemetry/api": "^1.9.1",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.7",

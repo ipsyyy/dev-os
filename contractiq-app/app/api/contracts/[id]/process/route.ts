@@ -1,16 +1,18 @@
-import type Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createClaudeClient, CLAUDE_MODEL } from '@/lib/claude/client'
+import { createAzureAgentClient, agentReferenceBody } from '@/lib/azure/client'
 import {
   STANDARD_TERMS,
-  EXTRACT_KEY_TERMS_TOOL,
-  TOOL_PARSE_RETRY_REMINDER,
+  JSON_RESPONSE_INSTRUCTIONS,
+  JSON_PARSE_RETRY_REMINDER,
   buildSystemPrompt,
   type ContractType,
   type ExtractedTermRaw,
   type ExtractKeyTermsToolInput,
 } from '@/lib/claude/extraction-prompt'
+
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
 const MAX_TOKENS = 15000
 const RETRY_DELAYS_MS = [1000, 2000, 4000]
@@ -19,22 +21,31 @@ function errorResponse(status: number, code: string, message?: string) {
   return NextResponse.json({ error: { code, ...(message ? { message } : {}) } }, { status })
 }
 
-class ToolParseError extends Error {}
+class ExtractionParseError extends Error {}
 
-function parseToolInput(input: unknown): ExtractKeyTermsToolInput | null {
-  if (typeof input === 'object' && input !== null && Array.isArray((input as { terms?: unknown }).terms)) {
-    return input as ExtractKeyTermsToolInput
+function parseAgentJson(outputText: string): ExtractKeyTermsToolInput | null {
+  // The agent is asked for raw JSON but may still wrap it in a markdown fence.
+  const stripped = outputText.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stripped)
+  } catch {
+    return null
+  }
+
+  if (typeof parsed === 'object' && parsed !== null && Array.isArray((parsed as { terms?: unknown }).terms)) {
+    return parsed as ExtractKeyTermsToolInput
   }
   return null
 }
 
-async function callExtractionTool(
-  client: Anthropic,
-  baseSystemPrompt: string,
+async function callExtractionAgent(
+  client: ReturnType<typeof createAzureAgentClient>,
+  basePrompt: string,
   contractText: string
 ): Promise<ExtractKeyTermsToolInput> {
-  let systemPrompt = baseSystemPrompt
-  let lastError: unknown
+  let extraReminder: string | undefined
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     if (attempt > 0) {
@@ -42,34 +53,36 @@ async function callExtractionTool(
     }
 
     try {
-      const response = await client.messages.create({
-        model: CLAUDE_MODEL,
-        max_tokens: 2000,
-        // `temperature` is deprecated/rejected for claude-sonnet-5 — omitted, not just defaulted.
-        system: systemPrompt,
-        tools: [EXTRACT_KEY_TERMS_TOOL],
-        tool_choice: { type: 'tool', name: 'extract_key_terms' },
-        messages: [{ role: 'user', content: contractText }],
-      })
+      const inputText = [basePrompt, JSON_RESPONSE_INSTRUCTIONS, extraReminder, `Contract text:\n${contractText}`]
+        .filter((part): part is string => Boolean(part))
+        .join('\n\n')
 
-      const toolUse = response.content.find((block) => block.type === 'tool_use')
-      const parsed = toolUse && parseToolInput(toolUse.input)
+      const response = await client.responses.create(
+        { input: [{ role: 'user', content: inputText }] },
+        { body: agentReferenceBody() }
+      )
+
+      const parsed = parseAgentJson(response.output_text ?? '')
       if (!parsed) {
-        throw new ToolParseError('Response did not include a valid extract_key_terms call')
+        throw new ExtractionParseError('Agent response did not contain valid extraction JSON')
       }
 
       return parsed
     } catch (err) {
-      lastError = err
       // Only the parse-failure retry gets the schema reminder — API/network
       // failures are retried with the prompt unchanged, per spec §3 step 6.
-      if (err instanceof ToolParseError) {
-        systemPrompt = `${baseSystemPrompt}\n\n${TOOL_PARSE_RETRY_REMINDER}`
+      if (err instanceof ExtractionParseError) {
+        extraReminder = JSON_PARSE_RETRY_REMINDER
+      }
+      // Surface the real Azure error on the final attempt instead of a
+      // generic fallback — needed to diagnose credential/endpoint problems.
+      if (attempt === RETRY_DELAYS_MS.length) {
+        throw err
       }
     }
   }
 
-  throw lastError
+  throw new Error('Extraction failed after all retries')
 }
 
 function validateTerms(raw: unknown, targetTermsLower: Set<string>, pageCount: number): ExtractedTermRaw[] {
@@ -146,14 +159,15 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const targetTermsLower = new Set(targetTerms.map((term) => term.trim().toLowerCase()))
     const customTermNamesLower = new Set(customTermNames.map((term) => term.trim().toLowerCase()))
 
-    const systemPrompt = buildSystemPrompt(contractType, targetTerms)
-    const client = createClaudeClient()
+    const basePrompt = buildSystemPrompt(contractType, targetTerms)
+    const client = createAzureAgentClient()
 
     let toolInput: ExtractKeyTermsToolInput
     try {
-      toolInput = await callExtractionTool(client, systemPrompt, contract.contract_text ?? '')
-    } catch {
-      return await fail(502, 'ai_provider_error', "We couldn't analyze this contract right now. Try again in a few minutes.")
+      toolInput = await callExtractionAgent(client, basePrompt, contract.contract_text ?? '')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown Azure agent error'
+      return await fail(502, 'ai_provider_error', message)
     }
 
     const validTerms = validateTerms(toolInput.terms, targetTermsLower, contract.page_count ?? Infinity)
