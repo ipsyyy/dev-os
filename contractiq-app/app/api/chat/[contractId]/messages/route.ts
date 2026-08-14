@@ -132,7 +132,7 @@ export async function POST(request: Request, { params }: { params: { contractId:
 
     try {
       const response = await client.responses.create(
-        { input: [{ role: 'user', content: buildInputText(contextPrompt, historyMessages, rawMessage) }] },
+        { input: [{ role: 'user', content: buildInputText(contextPrompt, historyMessages, rawMessage) }], store: false },
         { body: agentReferenceBody() }
       )
 
@@ -151,6 +151,7 @@ export async function POST(request: Request, { params }: { params: { contractId:
               input: [
                 { role: 'user', content: buildInputText(contextPrompt, historyMessages, rawMessage, CITATION_RETRY_REMINDER) },
               ],
+              store: false,
             },
             { body: agentReferenceBody() }
           )
@@ -175,10 +176,12 @@ export async function POST(request: Request, { params }: { params: { contractId:
       break
     } catch (err) {
       // network/5xx failure on the primary call — retried by the outer loop,
-      // unless this was the last attempt, in which case surface the real error.
+      // unless this was the last attempt. Log the real error server-side only —
+      // Azure error text can include internal endpoint/config details that
+      // shouldn't reach the client.
       if (attempt === RETRY_DELAYS_MS.length) {
-        const message = err instanceof Error ? err.message : 'Unknown Azure agent error'
-        return errorResponse(502, 'ai_provider_error', message)
+        console.error('Azure agent chat call failed', err)
+        return errorResponse(502, 'ai_provider_error', "We couldn't get a response right now. Try again in a few minutes.")
       }
     }
   }

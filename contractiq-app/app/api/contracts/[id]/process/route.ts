@@ -58,7 +58,7 @@ async function callExtractionAgent(
         .join('\n\n')
 
       const response = await client.responses.create(
-        { input: [{ role: 'user', content: inputText }] },
+        { input: [{ role: 'user', content: inputText }], store: false },
         { body: agentReferenceBody() }
       )
 
@@ -74,8 +74,8 @@ async function callExtractionAgent(
       if (err instanceof ExtractionParseError) {
         extraReminder = JSON_PARSE_RETRY_REMINDER
       }
-      // Surface the real Azure error on the final attempt instead of a
-      // generic fallback — needed to diagnose credential/endpoint problems.
+      // Propagate the real Azure error on the final attempt so the caller can
+      // log it server-side — never surfaced to the client as-is.
       if (attempt === RETRY_DELAYS_MS.length) {
         throw err
       }
@@ -166,8 +166,10 @@ export async function POST(request: Request, { params }: { params: { id: string 
     try {
       toolInput = await callExtractionAgent(client, basePrompt, contract.contract_text ?? '')
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown Azure agent error'
-      return await fail(502, 'ai_provider_error', message)
+      // Log server-side only — Azure error text can include internal
+      // endpoint/config details that shouldn't reach the client.
+      console.error('Azure agent extraction call failed', err)
+      return await fail(502, 'ai_provider_error', "We couldn't analyze this contract right now. Try again in a few minutes.")
     }
 
     const validTerms = validateTerms(toolInput.terms, targetTermsLower, contract.page_count ?? Infinity)
